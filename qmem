@@ -1,0 +1,209 @@
+#!/usr/bin/python
+# qmem: get memory usage on the nodes of a job
+# Copyright 2010 Anthony DiGirolamo <anthony.d@asu.edu>
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU General Public License as published by the Free Software
+# Foundation, version 3 of the License.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+# details.
+#
+# You should have received a copy of the GNU General Public License along with
+# this program.  If not, see <http://www.gnu.org/licenses/>.
+
+import getopt, sys, os, subprocess, re, math
+
+def usage():
+  help_string = """Usage: qmem [jobid]"""
+  print help_string
+
+def number_to_human_size(s):
+  STORAGE_VALUES = [1,1024,1048576,1073741824,1099511627776]
+  STORAGE_UNITS  = ['BYTE', 'KB', 'MB', 'GB', 'TB']
+  max_exp = len(STORAGE_UNITS)-1
+  number = float(s)
+  exponent = int(math.log(number, 1024))
+  if exponent > max_exp:
+    exponent = max_exp
+  unit_key = STORAGE_UNITS[exponent]
+  unit = STORAGE_VALUES[exponent]
+  precision = 2
+  rounded_number = round((number * (10 ** precision)) / 10 ** precision)
+  return '%(#)01.2f%(key)s' % {"key": unit_key, "#": rounded_number/unit}
+
+def stats_dictionary(hosts, host_stats):
+  stats = dict()
+  i = 0
+  # Sample contents of host_stats
+  # 10:47:58 up 21 days,  3:06, 39 users,  load average: 0.58, 0.66, 0.55
+  #                   total    used     free    shared buffers cached
+  # Mem:              16437332 16353592 83740   0      38468   14493644
+  # -/+buffers/cache: 1821480  14615852
+  # Swap:             8191992  300      8191692
+
+  for s in host_stats:
+    lines   = s.split('\n')
+    uptime  = lines[0].replace(',','').split()
+    mem     = lines[2].split()
+    buffers = lines[3].split()
+    swap    = lines[4].split()
+
+    compiled_stats = dict()
+    compiled_stats['load'] = uptime[-3:] # load = uptime[9:12] # 1 5 15 min
+    compiled_stats['ram']  = dict(used=buffers[2], free=buffers[3], total=mem[1])
+    compiled_stats['swp']  = dict(used=swap[2], free=swap[3], total=swap[1])
+
+    stats[hosts[i]] = compiled_stats
+    i+=1
+  return stats
+
+def qstat_dictionary(qstat):
+  qstat = qstat.split('\n')
+
+  # Selectively get rid of leading whitespace
+  def trim(s):
+    if s.find('\t') != -1:
+      return s
+    else:
+      return s.strip()
+  qstat = map(trim, qstat)
+
+  # Join lines that begin with tab
+  i = 0
+  for s in qstat:
+    if s.find('\t') != -1:
+      if key == -1:
+        key = i-1
+      qstat[key] += s.strip()
+    else:
+      key = -1
+    i+=1
+
+  # Recompile list without joined lines
+  to_delete = []
+  job_info = []
+  i = 0
+  for s in qstat:
+    if s == "":
+      to_delete.append(i)
+    elif s[0] == '\t':
+      to_delete.append(i)
+    else:
+      job_info.append(s)
+    i+=1
+
+  # Recompile as a list of tuples
+  i = 0
+  job_tuples = []
+  for s in job_info:
+    if i == 0:
+      job_tuples.append( tuple(s.split(": ")) )
+    else:
+      job_tuples.append( tuple(s.split(" = ")) )
+    i+=1
+
+  # Make a dictionary
+  job = dict(job_tuples)
+
+  # Delete old variables
+  del job_info
+  del qstat
+  del to_delete
+  del job_tuples
+  return job
+
+def print_bar(len, end=False):
+  sys.stdout.write("+")
+  for i in range(len):
+    sys.stdout.write("-")
+  if end == True:
+    sys.stdout.write("+\n")
+
+def print_separator(columns):
+  i = 0
+  for l in columns:
+    print_bar(l+2)
+  sys.stdout.write("+\n")
+
+def main():
+  try:
+    opts,args = getopt.getopt(sys.argv[1:], "hj:", ["help"])
+  except getopt.GetoptError, err:
+    print str(err)
+    usage()
+    sys.exit(2)
+
+  for option, argument in opts:
+    if option in ("-h", "--help"):
+      usage()
+      sys.exit()
+    elif option  in ("-j", "--jobid"):
+      jobid = argument
+    else:
+      assert False, "unhandled exception"
+
+  if len(args) == 0:
+    usage()
+    sys.exit()
+  elif len(args) > 0:
+    jobid = args[0]
+
+  # Run qstat -f
+  run_qstat = subprocess.Popen(['qstat', '-f', jobid], shell=False, stdout=subprocess.PIPE)
+  qstat, qstat_error = run_qstat.communicate()
+  if qstat == "":
+    sys.exit()
+
+  job = qstat_dictionary(qstat)
+
+  # Is the job running?
+  if 'job_state' in job:
+    if job['job_state'] == 'Q':
+      print "That job is not running yet"
+      sys.exit(2)
+
+  if 'exec_host' not in job:
+    print "Error: could not determine hosts"
+    sys.exit(2)
+
+  hosts = list(set( re.findall(r's\d+-\d+', job['exec_host'])))
+
+  host_stats = []
+  i = 0
+  for host in hosts:
+    ssh = subprocess.Popen(['ssh', "-o", "StrictHostKeyChecking=no", host, "-C", "uptime;free -b" ], shell=False, stdout=subprocess.PIPE)
+    ssh_output, ssh_error = ssh.communicate()
+    if 0 == len(re.findall(r'load average[\s\S]*total[\s\S]*used[\s\S]*free', ssh_output)):
+      print "Could not determine information for", hosts[i]
+    else:
+      host_stats.append(ssh_output)
+    i+=1
+
+  stats = stats_dictionary(hosts, host_stats)
+
+  if len(stats) == 0:
+    print "No information could be determined"
+    sys.exit()
+
+  columns = [7,19,19,19]
+  print_separator(columns)
+
+  print "|","Host".ljust( columns[0] ),
+  print "|","RAM (Used/Total)".ljust( columns[1] ),
+  print "|","Swap (Used/Total)".ljust( columns[2] ),
+  print "|","Load Average".ljust( columns[3] ),"|"
+  print_separator(columns)
+
+  for key,stats in stats.items():
+    print "|",key.center( columns[0] ),
+    print "|",( number_to_human_size(stats['ram']['used']) +" / "+ number_to_human_size(stats['ram']['total']) ).rjust( columns[1] ),
+    print "|",( number_to_human_size(stats['swp']['used']) +" / "+ number_to_human_size(stats['swp']['total']) ).rjust( columns[2] ),
+    print "|",(stats['load'][0]+", "+stats['load'][1]+", "+stats['load'][2]).rjust(columns[3]),"|"
+  print_separator(columns)
+
+if __name__ == "__main__":
+  main()
+
