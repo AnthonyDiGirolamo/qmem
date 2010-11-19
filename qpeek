@@ -3,9 +3,9 @@
 # qpeek:  Peek into a job's output spool files
 # Copyright 2006, 2007 Ohio Supercomputer Center
 # Revision info:
-# $HeadURL: http://svn.osc.edu/repos/pbstools/trunk/bin/qpeek $
+# $HeadURL: http://svn.osc.edu/repos/pbstools/releases/pbstools-2.0/bin/qpeek $
 # $Revision: 199 $
-# $Date: 2007-09-12 10:39:15 -0700 (Wed, 12 Sep 2007) $
+# $Date: 2007-09-12 13:39:15 -0400 (Wed, 12 Sep 2007) $
 #
 # Usage:  qpeek [options] JOBID
 #
@@ -50,7 +50,7 @@ if ( !defined($spool) )
   {
     die "Unable to find PBS spool directory!\n";
   }
-$pbsserver=`cat $spool/server_name` || 
+$pbsserver=`cat $spool/server_name` ||
   die "Unable to find PBS server name!\n";
 chop($pbsserver);
 # hack for sloppy admins who don't put the full hostname
@@ -138,8 +138,8 @@ die "Job $jobid is not running!\n" if ( $node eq "" );
 
 # chop to magic pbs length
 $jobname = "$jobid.$pbsserver";
-$jobname =~ s/(.{11}).*/$1/;
-exec "rsh -n $node $tool $numlines $spool/spool/$jobname.$suffix\n";
+#$jobname =~ s/(.{11}).*/$1/;
+exec "ssh -o StrictHostKeyChecking=no -n $node $tool $numlines $spool/spool/$jobname.$suffix\n";
 
 sub mothersuperior
 {
