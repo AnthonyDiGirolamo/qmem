@@ -23,6 +23,8 @@ def usage():
 def number_to_human_size(s):
   STORAGE_VALUES = [1,1024,1048576,1073741824,1099511627776]
   STORAGE_UNITS  = ['BYTE', 'KB', 'MB', 'GB', 'TB']
+  if float(s) <= 0.0:
+    return '%(#)01.2f%(key)s' % {"key": STORAGE_UNITS[2], "#": 0.0}
   max_exp = len(STORAGE_UNITS)-1
   number = float(s)
   exponent = int(math.log(number, 1024))
